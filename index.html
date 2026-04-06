@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Transformation Archive</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+<body>
+    <main class="site-shell home-shell">
+      <!-- Hero section: introduces the archive and its research focus. -->
+      <header class="hero">
+        <div class="hero-index">Archive 01</div>
+        <div class="hero-copy">
+          <p class="eyebrow">Transformation Archive / 转译档案</p>
+          <h1>Tracing how Chinese cultural meanings shift in Western contexts.</h1>
+          <p class="intro">
+            An interactive archive mapping how Chinese cultural concepts are
+            named, redirected, and reconstructed through translation, diaspora,
+            media, and design.
+          </p>
+        </div>
+      </header>
+
+      <!-- Concept section: explains how to read the archive map. -->
+      <section class="concept-grid" aria-labelledby="concept-title">
+        <div class="concept-label">Concept</div>
+        <div class="concept-copy">
+          <h2 id="concept-title" class="concept-title">Origin -> Transformation -> Outcome</h2>
+          <p>
+            A shared archive map visualizes four case studies at once, showing
+            how origin/context and Western outcome are connected through visible
+            translation processes.
+          </p>
+          <p class="concept-purpose">
+            Click any node to reveal historical, linguistic, and cultural
+            factors behind each shift in meaning.
+          </p>
+        </div>
+      </section>
+
+      <!-- Search section: lets users filter archive entries and map nodes. -->
+      <section class="search-section" aria-label="Search archive">
+        <div class="search-layout">
+          <label class="search-label" for="search">Search</label>
+          <input
+            id="search"
+            class="search-input"
+            type="search"
+            placeholder="Search titles, origins, outcomes, transformation labels, or explanations"
+            data-search-input
+          />
+        </div>
+      </section>
+
+      <!-- Overview section: shows the interactive relationship map. -->
+      <section class="overview-section" aria-labelledby="overview-title">
+        <div class="section-head">
+          <h2 id="overview-title">Archive Map / 总览关系图</h2>
+        </div>
+        <div class="overview-stage-wrap">
+          <div class="overview-viewport" data-overview-viewport>
+            <div class="overview-stage" data-overview-map></div>
+          </div>
+        </div>
+        <aside class="map-detail-panel" data-map-detail></aside>
+      </section>
+
+      <!-- Index section: lists all entries with expandable previews. -->
+      <section class="list-section" aria-labelledby="entry-list-title">
+        <div class="section-head">
+          <h2 id="entry-list-title">Index</h2>
+          <p class="entry-count" data-count></p>
+        </div>
+        <div class="term-list" data-term-list></div>
+      </section>
+    </main>
+
+    <!-- Load archive data first, then attach interactive behavior. -->
+    <script src="terms.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
