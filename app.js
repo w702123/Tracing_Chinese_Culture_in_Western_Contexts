@@ -2,14 +2,14 @@
   // Read the shared archive data and set constants for the overview map.
   var terms = Array.isArray(window.TERMS) ? window.TERMS : [];
   var OVERVIEW_WIDTH = 2440;
-  var OVERVIEW_HEIGHT = 1320;
   var MOBILE_BREAKPOINT = 760;
   var OVERVIEW_ORIGIN_X = 220;
   var OVERVIEW_OUTCOME_X = 2140;
-  var OVERVIEW_ROW_START_Y = 180;
-  var OVERVIEW_ROW_GAP = 280;
+  var OVERVIEW_ROW_START_Y = 170;
+  var OVERVIEW_ROW_GAP = 190;
+  var OVERVIEW_BOTTOM_PADDING = 180;
   var OVERVIEW_DEFAULT_ZOOM = 1;
-  var OVERVIEW_MIN_ZOOM = 0.7;
+  var OVERVIEW_MIN_ZOOM = 0.3;
   var OVERVIEW_MAX_ZOOM = 1.6;
   var OVERVIEW_ZOOM_STEP = 0.15;
 
@@ -23,9 +23,114 @@
       .replace(/'/g, "&#39;");
   }
 
+  // Allow very long bilingual titles to wrap after the slash while keeping short ones on one line.
+  function formatDetailTitle(value) {
+    return escapeHtml(value).replace(/\s\/\s/g, ' /<wbr> ');
+  }
+
+  // Break long bilingual factor titles at the slash so the Chinese subtitle moves onto a new line.
+  function formatPointDetailTitle(value) {
+    var raw = String(value || "");
+    var parts = raw.split(" / ");
+
+    if (
+      parts.length === 2 &&
+      (parts[0].length > 26 || raw === "European Fantasy Style / 欧洲想象风格")
+    ) {
+      return escapeHtml(parts[0]) + " /<br>" + escapeHtml(parts[1]);
+    }
+
+    return formatDetailTitle(raw);
+  }
+
   // Normalize text so searching stays case-insensitive and consistent.
   function normalize(value) {
-    return String(value || "").trim().toLowerCase();
+    return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+  }
+
+  // Break searchable text into word-like tokens for more precise matching.
+  function getSearchTokens(value) {
+    return normalize(value).match(/[\p{L}\p{N}]+/gu) || [];
+  }
+
+  // Search the archive by titles and structural labels, not full body copy.
+  function buildSearchDocument(term) {
+    var pointLabels = (term.points || [])
+      .map(function (point) {
+        return [point.label, point.title].join(" ");
+      })
+      .join(" ");
+    var overviewLabels = (term.overviewProcessNodes || [])
+      .map(function (node) {
+        return node.label;
+      })
+      .join(" ");
+    var fullText = normalize(
+      [
+        term.titleEn,
+        term.titleZhOrContext,
+        term.overviewOriginLabel,
+        term.overviewOutcomeLabel,
+        overviewLabels,
+        pointLabels
+      ].join(" ")
+    );
+
+    return {
+      fullText: fullText,
+      tokens: getSearchTokens(fullText)
+    };
+  }
+
+  // Match Latin input by whole words/prefixes, while keeping non-Latin queries flexible.
+  function queryTokenMatches(searchDoc, token) {
+    if (!token) {
+      return true;
+    }
+
+    if (/[a-z]/.test(token)) {
+      return searchDoc.tokens.some(function (word) {
+        return word === token;
+      });
+    }
+
+    return searchDoc.fullText.indexOf(token) !== -1;
+  }
+
+  // Search should work for full phrases and for multi-word token queries.
+  function termMatchesQuery(term, query) {
+    var normalizedQuery = normalize(query);
+    var searchDoc;
+    var queryTokens;
+    var isSingleLatinToken;
+
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    searchDoc = buildSearchDocument(term);
+    queryTokens = getSearchTokens(normalizedQuery);
+    isSingleLatinToken =
+      queryTokens.length === 1 &&
+      queryTokens[0] === normalizedQuery &&
+      /[a-z]/.test(normalizedQuery);
+
+    if (!isSingleLatinToken && searchDoc.fullText.indexOf(normalizedQuery) !== -1) {
+      return true;
+    }
+
+    return queryTokens.length
+      ? queryTokens.every(function (token) {
+          return queryTokenMatches(searchDoc, token);
+        })
+      : false;
+  }
+
+  // Capitalize Western outcome labels on the map without changing source data.
+  function formatOverviewOutcomeLabel(value) {
+    return String(value || "").replace(/(^|[\s/-]+)([a-z])/g, function (_, prefix, letter) {
+      return prefix + letter.toUpperCase();
+    });
   }
 
   // Read a value from the page URL, such as the selected term slug.
@@ -39,6 +144,17 @@
     return (term.points || []).find(function (point) {
       return point.id === pointId;
     });
+  }
+
+  // Reuse the clickable factor title English for map tags when available.
+  function getPointEnglishTitle(term, pointId) {
+    var point = getPointById(term, pointId);
+
+    if (!point || !point.title) {
+      return "";
+    }
+
+    return String(point.title).split("/")[0].trim();
   }
 
   // Build a stable key for nodes and lines across the interface.
@@ -56,9 +172,8 @@
 
     return (
       '<div class="point-detail-copy">' +
-      '<p class="detail-kicker">Clickable factor</p>' +
       "<h3>" +
-      escapeHtml(point.title) +
+      formatPointDetailTitle(point.title) +
       "</h3>" +
       "<p>" +
       escapeHtml(point.body) +
@@ -76,6 +191,12 @@
         : mode === "outcome"
           ? "Western Outcome"
           : "Archive Entry";
+    var detailTitle =
+      mode === "origin" &&
+      term.titleZhOrContext ===
+        "饺子、锅贴、小笼包、馄饨、汤圆 / jiǎozi, guōtiē, xiǎolóngbāo, húntun, tāngyuán"
+        ? "饺子、锅贴、小笼包、馄饨、汤圆 /<br>jiǎozi, guōtiē, xiǎolóngbāo, húntun, tāngyuán"
+        : formatDetailTitle(mode === "origin" ? term.titleZhOrContext : term.titleEn);
 
     return (
       '<div class="point-detail-copy">' +
@@ -83,7 +204,7 @@
       escapeHtml(heading) +
       "</p>" +
       "<h3>" +
-      escapeHtml(mode === "origin" ? term.titleZhOrContext : term.titleEn) +
+      detailTitle +
       "</h3>" +
       "<p>" +
       escapeHtml(term.shortExplanation) +
@@ -95,30 +216,21 @@
     );
   }
 
-  // Turn a list of transformation steps into a visual path.
-  function renderPathMarkup(steps, className) {
+  // Build a cleaner horizontal process flow for the detail page.
+  function renderProcessMarkup(steps) {
     return (steps || [])
       .map(function (step, index) {
-        var stepClass = (className || "path-step") + " path-step";
-
-        if (index === 0) {
-          stepClass += " is-origin";
-        } else if (index === steps.length - 1) {
-          stepClass += " is-outcome";
-        }
-
         return (
-          '<span class="' +
-          stepClass +
+          '<span class="process-step' +
+          (index === steps.length - 1 ? " is-last" : "") +
           '">' +
-          '<span class="path-node" aria-hidden="true"></span>' +
-          '<span class="path-label">' +
+          '<span class="process-label">' +
           escapeHtml(step) +
           "</span>" +
           "</span>"
         );
       })
-      .join('<span class="path-line" aria-hidden="true"></span>');
+      .join("");
   }
 
   // Draw one SVG line between two map nodes.
@@ -249,32 +361,39 @@
         };
   }
 
-  // Build one searchable text block for each term.
-  function buildSearchIndex(term) {
-    var pointBodies = (term.points || [])
-      .map(function (point) {
-        return [point.label, point.title, point.body, point.sidePoint || ""].join(" ");
-      })
-      .join(" ");
-    var overviewLabels = (term.overviewProcessNodes || [])
-      .map(function (node) {
-        return node.label;
-      })
-      .join(" ");
+  // Calculate a canvas height that grows with the number of archive rows.
+  function getOverviewHeight(items) {
+    if (!items.length) {
+      return 1320;
+    }
 
-    return normalize(
-      [
-        term.titleEn,
-        term.titleZhOrContext,
-        term.overviewOriginLabel,
-        term.overviewOutcomeLabel,
-        term.shortExplanation,
-        term.previewPath,
-        (term.pathSteps || []).join(" "),
-        overviewLabels,
-        pointBodies
-      ].join(" ")
+    return Math.max(
+      1320,
+      OVERVIEW_ROW_START_Y + (items.length - 1) * OVERVIEW_ROW_GAP + OVERVIEW_BOTTOM_PADDING
     );
+  }
+
+  // Place process nodes across the row so larger datasets do not need hand-tuned coordinates.
+  function buildProcessLayout(term, baseY) {
+    var processNodes = term.overviewProcessNodes || [];
+    var availableWidth = OVERVIEW_OUTCOME_X - OVERVIEW_ORIGIN_X;
+    var stepCount = processNodes.length + 1;
+    var xStep = availableWidth / stepCount;
+    var yOffsets = [0, -42, 42, -68];
+
+    return processNodes.map(function (point, index) {
+      var matchingEnglishTitle = getPointEnglishTitle(term, point.id);
+
+      return {
+        id: point.id,
+        key: buildSelectionKey(term.slug, "point", point.id),
+        label: matchingEnglishTitle || point.label,
+        type: "point",
+        x: OVERVIEW_ORIGIN_X + xStep * (index + 1),
+        y: baseY + yOffsets[index % yOffsets.length],
+        term: term
+      };
+    });
   }
 
   // Convert the term dataset into map nodes and line definitions.
@@ -282,6 +401,7 @@
     var connectionLines = [];
     var nodes = [];
     var termsBySlug = {};
+    var overviewHeight = getOverviewHeight(items);
 
     items.forEach(function (term, index) {
       var baseY = OVERVIEW_ROW_START_Y + index * OVERVIEW_ROW_GAP;
@@ -297,24 +417,13 @@
       var outcomeNode = {
         id: "outcome",
         key: buildSelectionKey(term.slug, "outcome", "outcome"),
-        label: term.overviewOutcomeLabel || term.titleEn,
+        label: formatOverviewOutcomeLabel(term.overviewOutcomeLabel || term.titleEn),
         type: "outcome",
         x: OVERVIEW_OUTCOME_X,
         y: baseY,
         term: term
       };
-      var processNodes = (term.overviewProcessNodes || []).map(function (point) {
-        return {
-          id: point.id,
-          key: buildSelectionKey(term.slug, "point", point.id),
-          label: point.label,
-          type: "point",
-          x: point.x,
-          y: point.y,
-          group: point.group,
-          term: term
-        };
-      });
+      var processNodes = buildProcessLayout(term, baseY);
       var nodeMap = {
         origin: originNode,
         outcome: outcomeNode
@@ -356,7 +465,8 @@
     return {
       nodes: nodes,
       connectionLines: connectionLines,
-      termsBySlug: termsBySlug
+      termsBySlug: termsBySlug,
+      height: overviewHeight
     };
   }
 
@@ -367,7 +477,7 @@
     }
 
     return items.filter(function (term) {
-      return buildSearchIndex(term).indexOf(query) !== -1;
+      return termMatchesQuery(term, query);
     });
   }
 
@@ -377,6 +487,7 @@
     var firstTerm = items[0];
     var fallbackSlug;
     var hasVisibleFallback;
+    var matchingTerms;
 
     if (!items.length) {
       return fallbackKey;
@@ -393,8 +504,15 @@
         : buildSelectionKey(firstTerm.slug, "outcome", "outcome");
     }
 
-    for (var i = 0; i < items.length; i += 1) {
-      var term = items[i];
+    matchingTerms = items.filter(function (term) {
+      return termMatchesQuery(term, normalizedQuery);
+    });
+
+    for (var i = 0; i < matchingTerms.length; i += 1) {
+      var term = matchingTerms[i];
+      var titleEnTokens = getSearchTokens(term.titleEn);
+      var titleZhTokens = getSearchTokens(term.titleZhOrContext);
+      var queryTokens = getSearchTokens(normalizedQuery);
 
       if (normalize(term.titleEn).indexOf(normalizedQuery) !== -1) {
         return buildSelectionKey(term.slug, "outcome", "outcome");
@@ -404,13 +522,31 @@
         return buildSelectionKey(term.slug, "origin", "origin");
       }
 
+       if (
+        queryTokens.length &&
+        queryTokens.every(function (token) {
+          return titleEnTokens.some(function (word) {
+            return word === token;
+          });
+        })
+      ) {
+        return buildSelectionKey(term.slug, "outcome", "outcome");
+      }
+
+      if (
+        queryTokens.length &&
+        queryTokens.every(function (token) {
+          return titleZhTokens.some(function (word) {
+            return word === token;
+          });
+        })
+      ) {
+        return buildSelectionKey(term.slug, "origin", "origin");
+      }
+
       for (var j = 0; j < (term.points || []).length; j += 1) {
         var point = term.points[j];
-        if (
-          normalize(
-            [point.label, point.title, point.body, point.sidePoint || ""].join(" ")
-          ).indexOf(normalizedQuery) !== -1
-        ) {
+        if (termMatchesQuery({ points: [point] }, normalizedQuery)) {
           return buildSelectionKey(term.slug, "point", point.id);
         }
       }
@@ -491,13 +627,13 @@
       '<div class="overview-canvas" style="width:' +
       OVERVIEW_WIDTH +
       "px;height:" +
-      OVERVIEW_HEIGHT +
+      model.height +
       'px">' +
       '<div class="overview-grid" aria-hidden="true"></div>' +
       '<svg class="overview-svg" viewBox="0 0 ' +
       OVERVIEW_WIDTH +
       " " +
-      OVERVIEW_HEIGHT +
+      model.height +
       '" preserveAspectRatio="none"></svg>' +
       nodeMarkupHtml +
       "</div>"
@@ -518,26 +654,8 @@
   }
 
   // Render one expandable card in the archive index list.
-  function renderHomePanel(term, selectedKey, isExpanded) {
+  function renderHomePanel(term, selectedKey, isExpanded, index) {
     var summaryKey = buildSelectionKey(term.slug, "outcome", "outcome");
-    var previewPoints = (term.points || [])
-      .slice(0, 3)
-      .map(function (point) {
-        var pointKey = buildSelectionKey(term.slug, "point", point.id);
-        return (
-          '<button class="point-button home-point-button' +
-          (selectedKey === pointKey ? " is-active" : "") +
-          '" type="button" data-home-point-key="' +
-          escapeHtml(pointKey) +
-          '">' +
-          '<span class="point-dot" aria-hidden="true"></span>' +
-          '<span class="point-text">' +
-          escapeHtml(point.label) +
-          "</span>" +
-          "</button>"
-        );
-      })
-      .join("");
 
     return (
       '<article class="entry-card entry-card-' +
@@ -551,12 +669,18 @@
       '" aria-expanded="' +
       (isExpanded ? "true" : "false") +
       '">' +
-      '<span class="entry-toggle-label">Index</span>' +
+      '<span class="entry-toggle-title-row">' +
       '<span class="entry-toggle-title">' +
+      '<span class="entry-toggle-index">' +
+      escapeHtml(String(index + 1) + ".") +
+      "</span>" +
+      '<span class="entry-toggle-title-text">' +
       escapeHtml(term.titleEn) +
+      "</span>" +
       "</span>" +
       '<span class="entry-toggle-context">' +
       escapeHtml(term.titleZhOrContext) +
+      "</span>" +
       "</span>" +
       '<span class="entry-toggle-icon" aria-hidden="true">' +
       (isExpanded ? "−" : "+") +
@@ -565,24 +689,11 @@
       '<div class="entry-card-panel' +
       (isExpanded ? " is-open" : "") +
       '">' +
-      '<div class="entry-card-main">' +
-      '<div class="entry-heading">' +
-      '<h3 class="entry-title"><button class="entry-title-button" type="button" data-home-point-key="' +
-      escapeHtml(summaryKey) +
-      '">' +
-      escapeHtml(term.titleEn) +
-      "</button></h3>" +
-      '<p class="entry-context">' +
-      escapeHtml(term.titleZhOrContext) +
+      '<div class="entry-card-main entry-card-main-simple">' +
+      '<div class="entry-card-summary">' +
+      '<p class="entry-summary-text">' +
+      escapeHtml(term.shortExplanation) +
       "</p>" +
-      "</div>" +
-      '<div class="entry-path-block">' +
-      '<div class="entry-visual-path entry-visual-path-compact">' +
-      renderPathMarkup(term.pathSteps, "entry-path-segment") +
-      "</div>" +
-      "</div>" +
-      '<div class="timeline home-timeline">' +
-      previewPoints +
       "</div>" +
       '<div class="entry-actions">' +
       '<a class="entry-link" href="term.html?slug=' +
@@ -600,47 +711,69 @@
     return Math.min(Math.max(zoom, OVERVIEW_MIN_ZOOM), OVERVIEW_MAX_ZOOM);
   }
 
-  // Calculate how far the user can pan without leaving empty space.
-  function getMaxPan(viewport, canvas, zoom) {
+  // Calculate the allowed pan range, keeping smaller canvases centered.
+  function getPanBounds(viewport, canvas, zoom) {
     var scaledViewportWidth;
     var scaledViewportHeight;
+    var minX;
+    var maxX;
+    var minY;
+    var maxY;
 
     if (!viewport || !canvas) {
-      return { x: 0, y: 0 };
+      return { minX: 0, maxX: 0, minY: 0, maxY: 0 };
     }
 
     scaledViewportWidth = viewport.clientWidth / zoom;
     scaledViewportHeight = viewport.clientHeight / zoom;
 
+    if (canvas.offsetWidth <= scaledViewportWidth) {
+      minX = (canvas.offsetWidth - scaledViewportWidth) / 2;
+      maxX = minX;
+    } else {
+      minX = 0;
+      maxX = canvas.offsetWidth - scaledViewportWidth;
+    }
+
+    if (canvas.offsetHeight <= scaledViewportHeight) {
+      minY = (canvas.offsetHeight - scaledViewportHeight) / 2;
+      maxY = minY;
+    } else {
+      minY = 0;
+      maxY = canvas.offsetHeight - scaledViewportHeight;
+    }
+
     return {
-      x: Math.max(canvas.offsetWidth - scaledViewportWidth, 0),
-      y: Math.max(canvas.offsetHeight - scaledViewportHeight, 0)
+      minX: minX,
+      maxX: maxX,
+      minY: minY,
+      maxY: maxY
     };
   }
 
-  // Start the map near the upper-left so the layout feels balanced on load.
+  // Start the map centered inside the viewport.
   function setInitialPan(viewport, canvas, zoom) {
-    var maxPan;
+    var panBounds;
 
     if (!viewport || !canvas) {
       return { x: 0, y: 0 };
     }
 
-    maxPan = getMaxPan(viewport, canvas, zoom);
+    panBounds = getPanBounds(viewport, canvas, zoom);
 
     return {
-      x: Math.min(Math.max(maxPan.x * 0.18, 0), maxPan.x),
-      y: Math.min(Math.max(maxPan.y * 0.08, 0), maxPan.y)
+      x: (panBounds.minX + panBounds.maxX) / 2,
+      y: (panBounds.minY + panBounds.maxY) / 2
     };
   }
 
   // Limit panning so the canvas stays inside the viewport.
   function clampPan(viewport, canvas, position, zoom) {
-    var maxPan = getMaxPan(viewport, canvas, zoom);
+    var panBounds = getPanBounds(viewport, canvas, zoom);
 
     return {
-      x: Math.min(Math.max(position.x, 0), maxPan.x),
-      y: Math.min(Math.max(position.y, 0), maxPan.y)
+      x: Math.min(Math.max(position.x, panBounds.minX), panBounds.maxX),
+      y: Math.min(Math.max(position.y, panBounds.minY), panBounds.maxY)
     };
   }
 
@@ -846,13 +979,22 @@
   // Render the home page: map, detail panel, search, and entry list.
   function renderHome() {
     var listRoot = document.querySelector("[data-term-list]");
-    var countRoot = document.querySelector("[data-count]");
+    var headingRoot = document.querySelector("[data-entry-list-heading]");
+    var toggleAllButton = document.querySelector("[data-toggle-all]");
     var overviewRoot = document.querySelector("[data-overview-map]");
     var detailRoot = document.querySelector("[data-map-detail]");
     var viewport = document.querySelector("[data-overview-viewport]");
     var searchInput = document.querySelector("[data-search-input]");
 
-    if (!listRoot || !countRoot || !overviewRoot || !detailRoot || !viewport || !searchInput) {
+    if (
+      !listRoot ||
+      !headingRoot ||
+      !toggleAllButton ||
+      !overviewRoot ||
+      !detailRoot ||
+      !viewport ||
+      !searchInput
+    ) {
       return;
     }
 
@@ -888,6 +1030,14 @@
       return autoExpandedSlug === slug;
     }
 
+    function areAllExpanded(items) {
+      return items.length
+        ? items.every(function (term) {
+            return isExpanded(term.slug);
+          })
+        : false;
+    }
+
     // Repaint the visible parts of the home page whenever state changes.
     function renderSelection(shouldCenterSelection) {
       var visibleTerms = getFilteredTerms(terms, searchQuery);
@@ -910,7 +1060,9 @@
           '<div class="point-detail-copy"><p class="detail-kicker">Search</p><h3>No match found</h3><p>Try searching by origin, outcome, process label, or explanation text.</p></div>';
         listRoot.innerHTML =
           '<div class="empty-state">No index entries match the current search.</div>';
-        countRoot.textContent = "0 entries";
+        headingRoot.textContent = "Index 0 entries";
+        toggleAllButton.textContent = "+ All Index";
+        toggleAllButton.setAttribute("aria-expanded", "false");
         return;
       }
 
@@ -945,11 +1097,16 @@
       overviewRoot.classList.add("is-focus-mode");
 
       listRoot.innerHTML = visibleTerms
-        .map(function (entry) {
-          return renderHomePanel(entry, selectedKey, isExpanded(entry.slug));
+        .map(function (entry, index) {
+          return renderHomePanel(entry, selectedKey, isExpanded(entry.slug), index);
         })
         .join("");
-      countRoot.textContent = visibleTerms.length + " entries";
+      headingRoot.textContent = "Index " + visibleTerms.length + " entries";
+      toggleAllButton.textContent = areAllExpanded(visibleTerms) ? "− All Index" : "+ All Index";
+      toggleAllButton.setAttribute(
+        "aria-expanded",
+        areAllExpanded(visibleTerms) ? "true" : "false"
+      );
 
       if (nodeType === "point") {
         detailRoot.innerHTML = renderPointDetail(getPointById(selectedTerm, nodeId));
@@ -961,16 +1118,17 @@
 
       // Initialize the map view once, then preserve the user's pan and zoom.
       if (canvas) {
-        if (!panIsInitialized || shouldCenterSelection) {
-          if (!panIsInitialized) {
-            var initialPan = setInitialPan(viewport, canvas, overviewView.zoom);
-            overviewView = {
-              x: initialPan.x,
-              y: initialPan.y,
-              zoom: overviewView.zoom
-            };
-            panIsInitialized = true;
-          }
+        if (!panIsInitialized) {
+          var initialPan = setInitialPan(viewport, canvas, overviewView.zoom);
+          overviewView = {
+            x: initialPan.x,
+            y: initialPan.y,
+            zoom: overviewView.zoom
+          };
+          panIsInitialized = true;
+        }
+
+        if (shouldCenterSelection) {
           overviewView = centerSelection(
             viewport,
             canvas,
@@ -1055,6 +1213,22 @@
             renderSelection(false);
           });
         });
+
+      toggleAllButton.onclick = function () {
+        var shouldCollapse = areAllExpanded(visibleTerms);
+
+        visibleTerms.forEach(function (term) {
+          if (shouldCollapse) {
+            delete manuallyExpandedSlugs[term.slug];
+            manuallyCollapsedSlugs[term.slug] = true;
+          } else {
+            manuallyExpandedSlugs[term.slug] = true;
+            delete manuallyCollapsedSlugs[term.slug];
+          }
+        });
+
+        renderSelection(false);
+      };
     }
 
     // Refilter the archive as the user types.
@@ -1084,6 +1258,7 @@
     var term = terms.find(function (item) {
       return item.slug === slug;
     });
+    var detailZhClass = "detail-zh";
 
     // Show a simple fallback message if the slug does not match any entry.
     if (!term) {
@@ -1096,8 +1271,12 @@
       return;
     }
 
+    if (term.titleZhOrContext === "没有直接对应的中文词 / No direct chinese term") {
+      detailZhClass += " detail-zh-nowrap";
+    }
+
     // Build the detail page and activate the first point by default.
-    var stepsMarkup = renderPathMarkup(term.pathSteps, "detail-path-segment");
+    var stepsMarkup = renderProcessMarkup(term.pathSteps);
     var pointsMarkup = (term.points || [])
       .map(function (point, index) {
         return (
@@ -1122,7 +1301,9 @@
       "<h1>" +
       escapeHtml(term.titleEn) +
       "</h1>" +
-      '<p class="detail-zh">' +
+      '<p class="' +
+      detailZhClass +
+      '">' +
       escapeHtml(term.titleZhOrContext) +
       "</p>" +
       "</div>" +
@@ -1131,36 +1312,15 @@
       "</div>" +
       "</header>" +
       '<section class="detail-section detail-intro">' +
-      '<div class="info-grid">' +
-      '<div class="info-block">' +
-      "<h2>" +
-      escapeHtml(term.originLabel) +
-      "</h2>" +
-      "<p>" +
-      escapeHtml(term.titleZhOrContext) +
-      "</p>" +
-      "</div>" +
-      '<div class="info-block info-block-process">' +
-      "<h2>Transformation Process</h2>" +
-      '<div class="path-preview path-preview-detail">' +
+      '<div class="detail-process-block">' +
+      "<h2>Process</h2>" +
+      '<div class="process-flow" aria-label="Transformation process">' +
       stepsMarkup +
       "</div>" +
       "</div>" +
-      '<div class="info-block">' +
-      "<h2>" +
-      escapeHtml(term.outcomeLabel) +
-      "</h2>" +
-      "<p>" +
-      escapeHtml(term.titleEn) +
-      "</p>" +
-      "</div>" +
-      "</div>" +
-      '<p class="detail-summary">' +
-      escapeHtml(term.shortExplanation) +
-      "</p>" +
       "</section>" +
       '<section class="detail-section timeline-section">' +
-      "<h2>Clickable Factors</h2>" +
+      "<h2>Transformation Labels</h2>" +
       '<div class="timeline detail-timeline" data-point-list>' +
       pointsMarkup +
       "</div>" +
